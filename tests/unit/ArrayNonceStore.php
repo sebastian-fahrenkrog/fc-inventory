@@ -12,7 +12,11 @@ final class ArrayNonceStore implements NonceStore {
 		return isset( $this->nonces[ $nonce ] );
 	}
 
-	public function remember( string $nonce, int $ttl ): void {
+	public function remember( string $nonce, int $ttl ): bool {
+		if ( isset( $this->nonces[ $nonce ] ) ) {
+			return false;
+		}
 		$this->nonces[ $nonce ] = $ttl;
+		return true;
 	}
 }

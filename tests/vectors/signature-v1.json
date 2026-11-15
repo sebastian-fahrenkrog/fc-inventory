@@ -1,5 +1,5 @@
 {
-    "description": "fc-inventory contract v1 signature vector. Key pair: sodium_crypto_sign_seed_keypair(seed) in PHP, ed25519.NewKeyFromSeed(seed) in Go. Ed25519 signatures are deterministic, so \"signature\" must match byte for byte.",
+    "description": "fc-inventory contract v1 signature vector. Key pair: sodium_crypto_sign_seed_keypair(seed) in PHP, ed25519.NewKeyFromSeed(seed) in Go. Ed25519 signatures are deterministic, so every \"signature\" must match byte for byte. The top-level nonce/message/signature repeat cases[0].",
     "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
     "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
     "key_id": "2026-11",
@@ -12,6 +12,24 @@
     "message": "fc-inventory-v1\nGET\nwww.example.com\n/wp-json/fc-inventory/v1/inventory\n1794729600\nAAECAwQFBgcICQoLDA0ODw",
     "message_hex": "66632d696e76656e746f72792d76310a4745540a7777772e6578616d706c652e636f6d0a2f77702d6a736f6e2f66632d696e76656e746f72792f76312f696e76656e746f72790a313739343732393630300a41414543417751464267634943516f4c4441304f4477",
     "signature": "7SkqNjbRZi3lYua9KPUS+s5lfRHfX1/BY4sKVNdNrS+RoNDGIBzoHgoiMg5fVjf4JP9SsMwDWANjpJMNC8D/Aw==",
+    "cases": [
+        {
+            "name": "nonce-00-0f",
+            "nonce_hex": "000102030405060708090a0b0c0d0e0f",
+            "nonce": "AAECAwQFBgcICQoLDA0ODw",
+            "message": "fc-inventory-v1\nGET\nwww.example.com\n/wp-json/fc-inventory/v1/inventory\n1794729600\nAAECAwQFBgcICQoLDA0ODw",
+            "message_hex": "66632d696e76656e746f72792d76310a4745540a7777772e6578616d706c652e636f6d0a2f77702d6a736f6e2f66632d696e76656e746f72792f76312f696e76656e746f72790a313739343732393630300a41414543417751464267634943516f4c4441304f4477",
+            "signature": "7SkqNjbRZi3lYua9KPUS+s5lfRHfX1/BY4sKVNdNrS+RoNDGIBzoHgoiMg5fVjf4JP9SsMwDWANjpJMNC8D/Aw=="
+        },
+        {
+            "name": "nonce-01",
+            "nonce_hex": "01010101010101010101010101010101",
+            "nonce": "AQEBAQEBAQEBAQEBAQEBAQ",
+            "message": "fc-inventory-v1\nGET\nwww.example.com\n/wp-json/fc-inventory/v1/inventory\n1794729600\nAQEBAQEBAQEBAQEBAQEBAQ",
+            "message_hex": "66632d696e76656e746f72792d76310a4745540a7777772e6578616d706c652e636f6d0a2f77702d6a736f6e2f66632d696e76656e746f72792f76312f696e76656e746f72790a313739343732393630300a41514542415145424151454241514542415145424151",
+            "signature": "chy5/hQznKCpGwZxJU4W8lQnpemxRftbnIVl3DQ6uq+dFd+dg2/NRi5vb3uCU7diQehaWni+C5YDgUMvdoRxAQ=="
+        }
+    ],
     "host_examples": [
         {
             "http_host": "WWW.Example.COM",

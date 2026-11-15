@@ -16,8 +16,16 @@ final class Admin {
 		add_filter( 'plugin_action_links_' . plugin_basename( FC_INVENTORY_FILE ), array( self::class, 'actionLinks' ) );
 	}
 
+	/**
+	 * On multisite every site admin has manage_options, but the keys decide
+	 * who can read the inventory, so only network admins may change them.
+	 */
+	public static function capability(): string {
+		return is_multisite() ? 'manage_network_options' : 'manage_options';
+	}
+
 	public static function menu(): void {
-		add_management_page( 'FC Inventory', 'FC Inventory', 'manage_options', self::SLUG, array( self::class, 'render' ) );
+		add_management_page( 'FC Inventory', 'FC Inventory', self::capability(), self::SLUG, array( self::class, 'render' ) );
 	}
 
 	/** @param array<string,string> $links */
@@ -28,7 +36,7 @@ final class Admin {
 	}
 
 	public static function render(): void {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! current_user_can( self::capability() ) ) {
 			wp_die( esc_html__( 'Sorry, you are not allowed to access this page.', 'fc-inventory' ) );
 		}
 		$notice = self::handlePost();

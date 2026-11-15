@@ -81,11 +81,13 @@ final class Verifier {
 		return $raw;
 	}
 
-	/** Checked after the signature so unsigned noise cannot fill the store. */
+	/**
+	 * One atomic insert, checked after the signature so unsigned noise cannot
+	 * fill the store. A failed insert counts as a replay.
+	 */
 	private function consumeNonce( string $nonce ): void {
-		if ( $this->nonces->seen( $nonce ) ) {
+		if ( ! $this->nonces->remember( $nonce, Signature::NONCE_TTL ) ) {
 			throw new AuthFailure( 'replayed nonce' );
 		}
-		$this->nonces->remember( $nonce, Signature::NONCE_TTL );
 	}
 }

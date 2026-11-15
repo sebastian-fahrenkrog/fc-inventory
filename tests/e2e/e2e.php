@@ -38,11 +38,11 @@ function signed_headers( array $cfg, ?string $host = null, ?int $ts = null, ?str
 }
 
 /** @return array{status: string, headers: list<string>, body: string} */
-function request( array $cfg, string $path, array $headers = array() ): array {
+function request( array $cfg, string $path, array $headers = array(), string $method = 'GET' ): array {
 	$ctx  = stream_context_create(
 		array(
 			'http' => array(
-				'method'          => 'GET',
+				'method'          => $method,
 				'header'          => $headers,
 				'ignore_errors'   => true,
 				'follow_location' => 0,
@@ -81,12 +81,16 @@ function check_success( array $cfg, string $path ): void {
 	check( '' !== ( $json['core'] ?? '' ) && '' !== ( $json['env']['db'] ?? '' ), "signed $path → core and db version present" );
 }
 
-/** A rejected request must look exactly like the 404 for an unknown route. */
-function check_identical_404( array $cfg, string $what, string $path, array $headers, string $unknown_path ): void {
-	$ours    = request( $cfg, $path, $headers );
-	$unknown = request( $cfg, $unknown_path );
-	check( str_contains( $ours['status'], ' 404' ), "$what → 404" );
-	check( comparable( $ours ) === comparable( $unknown ), "$what → byte-identical to $unknown_path" );
+/**
+ * A rejected request must look exactly like the same request to an unknown
+ * route: 404 rest_no_route, or for OPTIONS the empty 200 WordPress sends there.
+ */
+function check_identical_404( array $cfg, string $what, string $path, array $headers, string $unknown_path, string $method = 'GET' ): void {
+	$ours     = request( $cfg, $path, $headers, $method );
+	$unknown  = request( $cfg, $unknown_path, array(), $method );
+	$expected = 'OPTIONS' === $method ? ' 200' : ' 404';
+	check( str_contains( $ours['status'], $expected ), "$what →$expected" );
+	check( comparable( $ours ) === comparable( $unknown ), "$what → byte-identical to $method $unknown_path" );
 	if ( comparable( $ours ) !== comparable( $unknown ) ) {
 		fwrite( STDOUT, "  ours:    " . json_encode( comparable( $ours ) ) . "\n  unknown: " . json_encode( comparable( $unknown ) ) . "\n" );
 	}
@@ -104,11 +108,26 @@ function check_rejections( array $cfg ): void {
 	check_identical_404( $cfg, 'expired timestamp', PATH, signed_headers( $cfg, null, time() - 301 ), $unknown );
 }
 
-function check_throttle( array $cfg ): void {
-	for ( $i = 0; $i < 10; $i++ ) {
-		request( $cfg, PATH, array( 'X-FC-Key-Id: ' . $cfg['key_id'] ) );
+/** The namespace must not show up anywhere a visitor can look without a key. */
+function check_hidden( array $cfg ): void {
+	$index = request( $cfg, '/wp-json/' );
+	check( str_contains( $index['status'], ' 200' ) && ! str_contains( $index['body'], 'fc-inventory' ), 'GET /wp-json/ does not mention fc-inventory' );
+	$fallback_index = request( $cfg, '/?rest_route=/' );
+	check( ! str_contains( $fallback_index['body'], 'fc-inventory' ), 'GET /?rest_route=/ does not mention fc-inventory' );
+	check_identical_404( $cfg, 'namespace index', '/wp-json/fc-inventory/v1', array(), '/wp-json/no-such-namespace/v1' );
+	check_identical_404( $cfg, 'namespace index, fallback form', '/?rest_route=/fc-inventory/v1', array(), '/?rest_route=/no-such-namespace/v1' );
+	check_identical_404( $cfg, 'OPTIONS on the route', PATH, array(), '/wp-json/no-such-namespace/v1/x', 'OPTIONS' );
+	check_identical_404( $cfg, 'signed OPTIONS on the route', PATH, signed_headers( $cfg ), '/wp-json/no-such-namespace/v1/x', 'OPTIONS' );
+	check_identical_404( $cfg, 'POST on the route', PATH, array(), '/wp-json/no-such-namespace/v1/x', 'POST' );
+}
+
+/** Unsigned noise must not lock the puller out (no failure throttle). */
+function check_no_lockout( array $cfg ): void {
+	for ( $i = 0; $i < 15; $i++ ) {
+		request( $cfg, PATH );
 	}
-	check_identical_404( $cfg, 'valid request while throttled', PATH, signed_headers( $cfg ), '/wp-json/fc-inventory/v1/does-not-exist' );
+	$r = request( $cfg, PATH, signed_headers( $cfg ) );
+	check( str_contains( $r['status'], ' 200' ), "signed request after 15 unsigned ones → 200 ({$r['status']})" );
 }
 
 function config( array $argv ): array {
@@ -129,6 +148,7 @@ $cfg = config( $argv );
 check_success( $cfg, PATH );
 check_success( $cfg, FALLBACK_PATH );
 check_rejections( $cfg );
-check_throttle( $cfg );
+check_hidden( $cfg );
+check_no_lockout( $cfg );
 fwrite( STDOUT, 0 === $failures ? "e2e: all checks passed\n" : "e2e: $failures check(s) failed\n" );
 exit( 0 === $failures ? 0 : 1 );

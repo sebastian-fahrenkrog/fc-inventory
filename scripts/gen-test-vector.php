@@ -2,7 +2,7 @@
 /**
  * Writes tests/vectors/signature-v1.json, the shared test vector of contract
  * v1. Deterministic: Ed25519 key pair from seed = 32 bytes of 0x01, fixed
- * nonce 0x00..0x0f, fixed timestamp. The Go puller tests use the same file.
+ * timestamp, two cases with fixed nonces (0x00..0x0f and 16 x 0x01). The Go puller tests use the same file.
  *
  * Usage: php scripts/gen-test-vector.php [output-path]
  */
@@ -12,31 +12,56 @@ require dirname( __DIR__ ) . '/fc-inventory/includes/load.php';
 
 use FcInventory\Signature;
 
-/** @return array<string,mixed> */
-function build_vector(): array {
-	$seed      = str_repeat( "\x01", 32 );
-	$keypair   = sodium_crypto_sign_seed_keypair( $seed );
-	$nonce_raw = implode( '', array_map( 'chr', range( 0, 15 ) ) );
-	$nonce     = rtrim( strtr( base64_encode( $nonce_raw ), '+/', '-_' ), '=' );
-	$host      = 'www.example.com';
-	$timestamp = '1794729600';
-	$message   = Signature::message( $host, Signature::CANONICAL_PATH, $timestamp, $nonce );
-	$signature = sodium_crypto_sign_detached( $message, sodium_crypto_sign_secretkey( $keypair ) );
+define( 'SEED', str_repeat( "\x01", 32 ) );
+const HOST      = 'www.example.com';
+const TIMESTAMP = '1794729600';
 
+/**
+ * One signed request for the given raw nonce bytes.
+ *
+ * @return array<string,string>
+ */
+function build_case( string $name, string $nonce_raw ): array {
+	$nonce   = rtrim( strtr( base64_encode( $nonce_raw ), '+/', '-_' ), '=' );
+	$message = Signature::message( HOST, Signature::CANONICAL_PATH, TIMESTAMP, $nonce );
+	$secret  = sodium_crypto_sign_secretkey( sodium_crypto_sign_seed_keypair( SEED ) );
 	return array(
-		'description'   => 'fc-inventory contract v1 signature vector. Key pair: sodium_crypto_sign_seed_keypair(seed) in PHP, ed25519.NewKeyFromSeed(seed) in Go. Ed25519 signatures are deterministic, so "signature" must match byte for byte.',
-		'seed_hex'      => bin2hex( $seed ),
-		'public_key'    => base64_encode( sodium_crypto_sign_publickey( $keypair ) ),
+		'name'        => $name,
+		'nonce_hex'   => bin2hex( $nonce_raw ),
+		'nonce'       => $nonce,
+		'message'     => $message,
+		'message_hex' => bin2hex( $message ),
+		'signature'   => base64_encode( sodium_crypto_sign_detached( $message, $secret ) ),
+	);
+}
+
+/**
+ * Shared fields, the first case repeated at the top level (the format of
+ * the first version of this file) and all cases under "cases".
+ *
+ * @return array<string,mixed>
+ */
+function build_vector(): array {
+	$cases = array(
+		build_case( 'nonce-00-0f', implode( '', array_map( 'chr', range( 0, 15 ) ) ) ),
+		build_case( 'nonce-01', str_repeat( "\x01", 16 ) ),
+	);
+	$first = $cases[0];
+	return array(
+		'description'   => 'fc-inventory contract v1 signature vector. Key pair: sodium_crypto_sign_seed_keypair(seed) in PHP, ed25519.NewKeyFromSeed(seed) in Go. Ed25519 signatures are deterministic, so every "signature" must match byte for byte. The top-level nonce/message/signature repeat cases[0].',
+		'seed_hex'      => bin2hex( SEED ),
+		'public_key'    => base64_encode( sodium_crypto_sign_publickey( sodium_crypto_sign_seed_keypair( SEED ) ) ),
 		'key_id'        => '2026-11',
 		'method'        => Signature::METHOD,
-		'host'          => $host,
+		'host'          => HOST,
 		'path'          => Signature::CANONICAL_PATH,
-		'timestamp'     => (int) $timestamp,
-		'nonce_hex'     => bin2hex( $nonce_raw ),
-		'nonce'         => $nonce,
-		'message'       => $message,
-		'message_hex'   => bin2hex( $message ),
-		'signature'     => base64_encode( $signature ),
+		'timestamp'     => (int) TIMESTAMP,
+		'nonce_hex'     => $first['nonce_hex'],
+		'nonce'         => $first['nonce'],
+		'message'       => $first['message'],
+		'message_hex'   => $first['message_hex'],
+		'signature'     => $first['signature'],
+		'cases'         => $cases,
 		'host_examples' => host_examples(),
 	);
 }

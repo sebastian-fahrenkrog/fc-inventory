@@ -74,6 +74,26 @@ install_site() {
   wp_cli plugin install /work/fc-inventory.zip --activate
 }
 
+count_rows() {
+  wp_cli db query --skip-column-names \
+    "SELECT COUNT(*) FROM wp_options WHERE option_name LIKE '%fc\_inventory%'" | tr -d '[:space:]'
+}
+
+check_uninstall() {
+  wp_cli option update fc_inventory_pubkeys '{"old":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}' --format=json >/dev/null
+  echo "rows before: $(count_rows)"
+  wp_cli plugin deactivate fc-inventory
+  wp_cli plugin uninstall fc-inventory
+  local after
+  after="$(count_rows)"
+  echo "rows after: ${after}"
+  if [ "${after}" != "0" ]; then
+    echo "FAIL uninstall left ${after} row(s)" >&2
+    exit 1
+  fi
+  echo "PASS uninstall removed all fc_inventory rows"
+}
+
 main() {
   log "key pair and plugin ZIP"
   PUB="$(make_key)"
@@ -95,6 +115,8 @@ main() {
   wp_cli eval-file /work/admin-check.php --user=admin
   log "last successful pull (option)"
   wp_cli option get fc_inventory_last_pull --format=json
+  log "uninstall removes every stored row"
+  check_uninstall
   log "debug log lines of the plugin"
   docker logs "${P}-wp" 2>&1 | grep 'fc-inventory:' | sort | uniq -c || true
 }

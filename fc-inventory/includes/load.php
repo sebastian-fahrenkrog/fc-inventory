@@ -16,8 +16,7 @@ require_once __DIR__ . '/FileScanner.php';
 require_once __DIR__ . '/Inventory.php';
 
 if ( defined( 'ABSPATH' ) ) {
-	require_once __DIR__ . '/TransientNonceStore.php';
-	require_once __DIR__ . '/Throttle.php';
+	require_once __DIR__ . '/OptionNonceStore.php';
 	require_once __DIR__ . '/Endpoint.php';
 	require_once __DIR__ . '/Admin.php';
 	require_once __DIR__ . '/Updater.php';

@@ -22,28 +22,41 @@ final class VectorTest extends TestCase {
 		$this->assertSame( $v['public_key'], base64_encode( sodium_crypto_sign_publickey( $pair ) ) );
 	}
 
+	/** Every case, including the top-level one, must reproduce byte for byte. */
 	public function testMessageAndSignature(): void {
-		$v       = self::vector();
-		$nonce   = rtrim( strtr( base64_encode( hex2bin( $v['nonce_hex'] ) ), '+/', '-_' ), '=' );
-		$message = Signature::message( $v['host'], $v['path'], (string) $v['timestamp'], $v['nonce'] );
-		$secret  = sodium_crypto_sign_secretkey( sodium_crypto_sign_seed_keypair( hex2bin( $v['seed_hex'] ) ) );
-		$this->assertSame( $v['nonce'], $nonce );
+		$v      = self::vector();
+		$secret = sodium_crypto_sign_secretkey( sodium_crypto_sign_seed_keypair( hex2bin( $v['seed_hex'] ) ) );
 		$this->assertSame( Signature::CANONICAL_PATH, $v['path'] );
-		$this->assertSame( $v['message'], $message );
-		$this->assertSame( $v['message_hex'], bin2hex( $message ) );
-		$this->assertSame( $v['signature'], base64_encode( sodium_crypto_sign_detached( $message, $secret ) ) );
+		$this->assertCount( 2, $v['cases'] );
+		foreach ( array_merge( array( $v ), $v['cases'] ) as $case ) {
+			$nonce   = rtrim( strtr( base64_encode( hex2bin( $case['nonce_hex'] ) ), '+/', '-_' ), '=' );
+			$message = Signature::message( $v['host'], $v['path'], (string) $v['timestamp'], $case['nonce'] );
+			$this->assertSame( $case['nonce'], $nonce );
+			$this->assertSame( $case['message'], $message );
+			$this->assertSame( $case['message_hex'], bin2hex( $message ) );
+			$this->assertSame( $case['signature'], base64_encode( sodium_crypto_sign_detached( $message, $secret ) ) );
+		}
 	}
 
-	public function testVerifierAcceptsVector(): void {
-		$v        = self::vector();
-		$verifier = new Verifier( array( $v['key_id'] => base64_decode( $v['public_key'] ) ), new ArrayNonceStore(), $v['timestamp'] );
-		$headers  = array(
-			'key_id'    => $v['key_id'],
-			'timestamp' => (string) $v['timestamp'],
-			'nonce'     => $v['nonce'],
-			'signature' => $v['signature'],
-		);
-		$this->assertSame( $v['key_id'], $verifier->verify( $headers, $v['host'] ) );
+	/** The case the Go puller computed independently. */
+	public function testGoPullerCase(): void {
+		$go = array_column( self::vector()['cases'], null, 'name' )['nonce-01'];
+		$this->assertSame( 'AQEBAQEBAQEBAQEBAQEBAQ', $go['nonce'] );
+		$this->assertSame( 'chy5/hQznKCpGwZxJU4W8lQnpemxRftbnIVl3DQ6uq+dFd+dg2/NRi5vb3uCU7diQehaWni+C5YDgUMvdoRxAQ==', $go['signature'] );
+	}
+
+	public function testVerifierAcceptsEveryCase(): void {
+		$v = self::vector();
+		foreach ( $v['cases'] as $case ) {
+			$verifier = new Verifier( array( $v['key_id'] => base64_decode( $v['public_key'] ) ), new ArrayNonceStore(), $v['timestamp'] );
+			$headers  = array(
+				'key_id'    => $v['key_id'],
+				'timestamp' => (string) $v['timestamp'],
+				'nonce'     => $case['nonce'],
+				'signature' => $case['signature'],
+			);
+			$this->assertSame( $v['key_id'], $verifier->verify( $headers, $v['host'] ), $case['name'] );
+		}
 	}
 
 	public function testHostExamples(): void {

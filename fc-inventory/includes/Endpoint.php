@@ -6,24 +6,34 @@ defined( 'ABSPATH' ) || exit;
 /**
  * REST route fc-inventory/v1/inventory.
  *
- * The signature is checked in rest_pre_dispatch, before WordPress matches
- * the route. A failure returns the same WP_Error that WordPress builds for
- * an unknown route, and because no route is matched yet, no Allow header or
- * other route-specific output is added: the 404 is byte-identical to the one
- * for a route that does not exist. The permission_callback only confirms
- * that this request passed that check.
+ * Every request below /fc-inventory/v1 is handled in rest_pre_dispatch,
+ * before WordPress matches a route: only a verified GET/HEAD on the inventory
+ * route passes. Everything else (other methods, the namespace index,
+ * unknown sub-routes, failed signatures) gets the same WP_Error that
+ * WordPress builds for an unknown route, and OPTIONS gets the empty 200 that
+ * WordPress sends for OPTIONS on an unknown route. Because no route is
+ * matched at that point, no Allow header or route description is added and
+ * the 404 equals the one for a route that does not exist. The route and its
+ * namespace are also left out of the /wp-json/ index. The permission_callback
+ * only confirms that this request passed the check.
  */
 final class Endpoint {
-	public const NAMESPACE  = 'fc-inventory/v1';
-	public const ROUTE      = '/inventory';
-	public const LAST_PULL  = 'fc_inventory_last_pull';
-	private const FULL_ROUTE = '/' . self::NAMESPACE . self::ROUTE;
+	public const NAMESPACE   = 'fc-inventory/v1';
+	public const ROUTE       = '/inventory';
+	public const LAST_PULL   = 'fc_inventory_last_pull';
+	public const LOG_GATE    = 'fc_inventory_log_gate';
+	private const PREFIX     = '/' . self::NAMESPACE;
+	private const FULL_ROUTE = self::PREFIX . self::ROUTE;
+
+	/** At most one rejection line per this many seconds in the error log. */
+	private const LOG_INTERVAL = 60;
 
 	private static bool $verified = false;
 
 	public static function register(): void {
 		add_action( 'rest_api_init', array( self::class, 'registerRoute' ) );
 		add_filter( 'rest_pre_dispatch', array( self::class, 'preDispatch' ), -100, 3 );
+		add_filter( 'rest_index', array( self::class, 'hideFromIndex' ) );
 	}
 
 	public static function sodiumAvailable(): bool {
@@ -43,6 +53,7 @@ final class Endpoint {
 				'methods'             => 'GET',
 				'callback'            => array( self::class, 'respond' ),
 				'permission_callback' => array( self::class, 'permission' ),
+				'show_in_index'       => false,
 			)
 		);
 	}
@@ -54,41 +65,72 @@ final class Endpoint {
 	 * @return mixed
 	 */
 	public static function preDispatch( $result, $server, $request ) {
-		if ( null !== $result || ! self::sodiumAvailable() || ! self::isOurRequest( $request ) ) {
+		if ( null !== $result || ! self::sodiumAvailable() ) {
 			return $result;
 		}
-		if ( ! self::authorize( $request ) ) {
+		$route = strtolower( $request->get_route() );
+		if ( ! str_starts_with( $route, self::PREFIX ) ) {
+			return $result;
+		}
+		if ( 'OPTIONS' === $request->get_method() ) {
+			return self::unknownOptions();
+		}
+		if ( ! self::isInventoryRead( $route, $request->get_method() ) || ! self::authorize( $request ) ) {
 			return self::notFound();
 		}
 		self::$verified = true;
 		return $result;
 	}
 
-	/** Same match rules as WordPress: case-insensitive, GET and HEAD. */
-	private static function isOurRequest( \WP_REST_Request $request ): bool {
-		$route = untrailingslashit( strtolower( $request->get_route() ) );
-		return self::FULL_ROUTE === $route && in_array( $request->get_method(), array( 'GET', 'HEAD' ), true );
+	private static function isInventoryRead( string $route, string $method ): bool {
+		return self::FULL_ROUTE === $route && in_array( $method, array( 'GET', 'HEAD' ), true );
+	}
+
+	/**
+	 * Drops the namespace and its routes from the /wp-json/ index.
+	 *
+	 * @param \WP_REST_Response $response
+	 * @return \WP_REST_Response
+	 */
+	public static function hideFromIndex( $response ) {
+		$data = $response->get_data();
+		if ( isset( $data['namespaces'] ) && is_array( $data['namespaces'] ) ) {
+			$data['namespaces'] = array_values( array_diff( $data['namespaces'], array( self::NAMESPACE ) ) );
+		}
+		if ( isset( $data['routes'] ) && is_array( $data['routes'] ) ) {
+			foreach ( array_keys( $data['routes'] ) as $route ) {
+				if ( str_starts_with( strtolower( (string) $route ), self::PREFIX ) ) {
+					unset( $data['routes'][ $route ] );
+				}
+			}
+		}
+		$response->set_data( $data );
+		return $response;
 	}
 
 	private static function authorize( \WP_REST_Request $request ): bool {
-		if ( Throttle::blocked() ) {
-			error_log( 'fc-inventory: rejected request: throttled' );
-			return false;
-		}
 		$keys = Keys::configured();
 		if ( array() === $keys ) {
-			error_log( 'fc-inventory: rejected request: no public key configured' );
+			self::logRejection( 'no public key configured' );
 			return false;
 		}
 		try {
-			$key_id = ( new Verifier( $keys, new TransientNonceStore(), time() ) )->verify( self::headers( $request ), self::host() );
+			$key_id = ( new Verifier( $keys, new OptionNonceStore(), time() ) )->verify( self::headers( $request ), self::host() );
 		} catch ( AuthFailure $e ) {
-			error_log( 'fc-inventory: rejected request: ' . $e->getMessage() );
-			Throttle::recordFailure( time() );
+			self::logRejection( $e->getMessage() );
 			return false;
 		}
 		update_option( self::LAST_PULL, array( 'time' => time(), 'key_id' => $key_id ), false );
 		return true;
+	}
+
+	/** Rate-limited so unsigned noise cannot flood the error log. */
+	private static function logRejection( string $reason ): void {
+		if ( false !== get_transient( self::LOG_GATE ) ) {
+			return;
+		}
+		set_transient( self::LOG_GATE, 1, self::LOG_INTERVAL );
+		error_log( 'fc-inventory: rejected request: ' . $reason . ' (further rejections within 60 s are not logged)' );
 	}
 
 	/** @return array<string,?string> */
@@ -113,6 +155,16 @@ final class Endpoint {
 			__( 'No route was found matching the URL and request method.' ),
 			array( 'status' => 404 )
 		);
+	}
+
+	/**
+	 * What WordPress answers to OPTIONS on a route that does not exist
+	 * (rest_handle_options_request without a match): 200 with an empty list.
+	 */
+	public static function unknownOptions(): \WP_REST_Response {
+		$response = new \WP_REST_Response();
+		$response->set_data( array() );
+		return $response;
 	}
 
 	/** @return true|\WP_Error */

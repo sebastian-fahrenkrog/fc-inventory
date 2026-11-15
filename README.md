@@ -49,7 +49,8 @@ define( 'FC_INVENTORY_PUBKEYS', array(
 ) );
 ```
 
-**Or Tools → FC Inventory** (capability `manage_options`): one key per line,
+**Or Tools → FC Inventory** (capability `manage_options`, on multisite
+`manage_network_options`): one key per line,
 `<key-id> <base64 public key>`. While the constant is set, the form is
 read-only and says so.
 
@@ -113,9 +114,11 @@ only plugins and themes that ship `vendor/composer/installed.json`.
 `tests/vectors/signature-v1.json` is the shared vector of contract v1: key
 pair from seed = 32 bytes of `0x01` (`sodium_crypto_sign_seed_keypair` in PHP,
 `ed25519.NewKeyFromSeed` in Go), host `www.example.com`, timestamp
-`1794729600`, nonce bytes `0x00..0x0f`, plus the expected message and
-signature. Ed25519 is deterministic, so every implementation must reproduce
-the signature byte for byte. `scripts/gen-test-vector.php` regenerates it; CI
+`1794729600`, and one case per nonce (bytes `0x00..0x0f`, and 16 × `0x01`, the
+case the Go puller computed independently), each with the expected message
+and signature. The top-level `nonce`/`message`/`signature` repeat the first
+case. Ed25519 is deterministic, so every implementation must reproduce each
+signature byte for byte. `scripts/gen-test-vector.php` regenerates it; CI
 fails if the committed file differs.
 
 ## Security model
@@ -127,18 +130,25 @@ fails if the committed file differs.
   nonce is remembered for 600 s after a verified request).
 - **Verification** uses `sodium_crypto_sign_verify_detached()`. All inputs are
   checked against strict formats before decoding.
-- **Invisible from outside.** Every failure — missing or malformed header,
-  unknown key, bad signature, expired timestamp, replayed nonce, missing
-  sodium, no key configured — answers the exact 404 `rest_no_route` that
-  WordPress returns for a route that does not exist, with the same headers and
-  body. The check runs in `rest_pre_dispatch`, before WordPress matches the
-  route, so no `Allow` header or other route-specific output gives the plugin
-  away. The end-to-end test compares both responses byte by byte. The reason
-  goes to the PHP error log only, without request data.
-- **Throttle.** After 10 failed checks within 10 minutes, every request gets
-  the 404 without verification for 10 minutes. The counter is site-wide, so a
-  flood of bad requests also delays the legitimate pull by up to 10 minutes;
-  the puller simply retries at its next interval.
+- **Replay store.** Each verified nonce is stored as one row in `wp_options`
+  with a single `INSERT IGNORE` on the unique option name, so of two parallel
+  requests with the same nonce only one gets through. A failed insert counts
+  as a replay. Expired rows are deleted after each successful pull.
+- **Failures look like an unknown route.** Every failure — missing or
+  malformed header, unknown key, bad signature, expired timestamp, replayed
+  nonce, no key configured — and every other request below
+  `/fc-inventory/v1` (the namespace index, other methods, unknown sub-routes)
+  gets the same response WordPress gives for a route that does not exist: the
+  404 `rest_no_route`, or for `OPTIONS` the empty 200. The namespace is left
+  out of the `/wp-json/` index. The end-to-end test compares these responses
+  byte by byte. This keeps the endpoint quiet; it is not a secret. The plugin
+  files can be fetched like those of any plugin, so the plugin's presence can
+  be detected. Security rests on the signature alone.
+- **No failure throttle.** Verifying an Ed25519 signature costs less than the
+  WordPress bootstrap every request pays anyway, and a site-wide lockout would
+  let anyone block the real puller with a few unsigned requests. Instead the
+  error log gets at most one rejection line per minute, with a fixed reason
+  and no request data.
 - **No caching.** The response sends `nocache_headers()`, `DONOTCACHEPAGE` and
   `Cache-Control: no-store`, so page caches and proxies do not keep it.
 - Without `ext-sodium` the route is not registered at all, and the plugin
@@ -179,9 +189,19 @@ tests/e2e/run.sh            # throwaway Docker stack: WordPress + MariaDB + WP-C
 The end-to-end test installs the plugin from a fresh ZIP, configures a test
 key through the constant, signs requests as the puller does, checks both URL
 forms, compares every rejected request (unsigned, replayed, wrong host,
-expired, throttled) byte by byte with WordPress' own 404, runs the WP-CLI
-commands and the Tools page, and removes all containers, the network and the
-volume at the end.
+expired, namespace index, `OPTIONS`, `POST`) byte by byte with the same
+request to an unknown route, checks that `/wp-json/` does not list the
+namespace and that 15 unsigned requests do not lock out a signed one, runs the
+WP-CLI commands, the Tools page, the update channel from a cached manifest and
+the uninstall, and removes all containers, the network and the volume at the
+end.
+
+## Uninstall
+
+Deleting the plugin in wp-admin runs `uninstall.php`, which removes the key
+option, the last-pull record, the nonce rows, the log-gate transient and the
+cached update manifest — on multisite for every site. A key set through the
+constant stays in `wp-config.php`.
 
 ## Release process
 
