@@ -1,0 +1,47 @@
+{
+    "description": "fc-inventory contract v1 signature vector. Key pair: sodium_crypto_sign_seed_keypair(seed) in PHP, ed25519.NewKeyFromSeed(seed) in Go. Ed25519 signatures are deterministic, so \"signature\" must match byte for byte.",
+    "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
+    "key_id": "2026-11",
+    "method": "GET",
+    "host": "www.example.com",
+    "path": "/wp-json/fc-inventory/v1/inventory",
+    "timestamp": 1794729600,
+    "nonce_hex": "000102030405060708090a0b0c0d0e0f",
+    "nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "message": "fc-inventory-v1\nGET\nwww.example.com\n/wp-json/fc-inventory/v1/inventory\n1794729600\nAAECAwQFBgcICQoLDA0ODw",
+    "message_hex": "66632d696e76656e746f72792d76310a4745540a7777772e6578616d706c652e636f6d0a2f77702d6a736f6e2f66632d696e76656e746f72792f76312f696e76656e746f72790a313739343732393630300a41414543417751464267634943516f4c4441304f4477",
+    "signature": "7SkqNjbRZi3lYua9KPUS+s5lfRHfX1/BY4sKVNdNrS+RoNDGIBzoHgoiMg5fVjf4JP9SsMwDWANjpJMNC8D/Aw==",
+    "host_examples": [
+        {
+            "http_host": "WWW.Example.COM",
+            "https": true,
+            "host": "www.example.com"
+        },
+        {
+            "http_host": "www.example.com:443",
+            "https": true,
+            "host": "www.example.com"
+        },
+        {
+            "http_host": "www.example.com:80",
+            "https": false,
+            "host": "www.example.com"
+        },
+        {
+            "http_host": "www.example.com:80",
+            "https": true,
+            "host": "www.example.com:80"
+        },
+        {
+            "http_host": "www.example.com:8443",
+            "https": true,
+            "host": "www.example.com:8443"
+        },
+        {
+            "http_host": "xn--bcher-kva.example",
+            "https": true,
+            "host": "xn--bcher-kva.example"
+        }
+    ]
+}

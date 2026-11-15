@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: sodium, zip
+          coverage: none
+      - name: Lint
+        run: find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l
+      - name: Install dev dependencies
+        run: composer install --no-interaction --no-progress
+      - name: PHPUnit
+        run: vendor/bin/phpunit
+      - name: Test vector is up to date
+        run: |
+          php scripts/gen-test-vector.php "$RUNNER_TEMP/vector.json"
+          diff -u tests/vectors/signature-v1.json "$RUNNER_TEMP/vector.json"

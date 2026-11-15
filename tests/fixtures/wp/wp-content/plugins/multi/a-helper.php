@@ -1,0 +1,2 @@
+<?php
+// helper without header

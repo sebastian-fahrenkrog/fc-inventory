@@ -1,0 +1,2 @@
+<?php
+// loader without header
