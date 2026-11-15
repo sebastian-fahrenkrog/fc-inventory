@@ -45,7 +45,7 @@ key. Configure that public key on the site, either way:
 
 ```php
 define( 'FC_INVENTORY_PUBKEYS', array(
-	'2026-11' => 'iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=',
+	'2026-11' => '<base64 public key from wp-puller keygen>',
 ) );
 ```
 
