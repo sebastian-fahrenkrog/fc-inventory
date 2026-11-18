@@ -23,6 +23,8 @@ final class Cli {
 		$keys      = Keys::configured();
 		$source    = Keys::fromConstant() ? 'constant FC_INVENTORY_PUBKEYS' : 'option ' . Keys::OPTION;
 		$problems += self::line( array() !== $keys, sprintf( 'keys (%s): %s', $source, implode( ', ', array_keys( $keys ) ) ), sprintf( 'no valid key configured (%s)', $source ) );
+		$actions = array_keys( Keys::configuredActions() );
+		\WP_CLI::log( 'Action keys:  ' . ( array() === $actions ? 'none (updates cannot be ordered)' : implode( ', ', $actions ) . ' → ' . Endpoint::actionUrl() ) );
 		\WP_CLI::log( 'Endpoint:     ' . Endpoint::url() );
 		\WP_CLI::log( 'Fallback URL: ' . Endpoint::fallbackUrl() );
 		\WP_CLI::log( 'Inventory (local dry run):' );

@@ -4,11 +4,13 @@ namespace FcInventory;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * REST route fc-inventory/v1/inventory.
+ * REST routes fc-inventory/v1/inventory (read) and fc-inventory/v1/action
+ * (signed orders: updates, deactivation).
  *
  * Every request below /fc-inventory/v1 is handled in rest_pre_dispatch,
  * before WordPress matches a route: only a verified GET/HEAD on the inventory
- * route passes. Everything else (other methods, the namespace index,
+ * route passes, or a POST on the action route that verifies against one of
+ * the separate action keys (constant FC_INVENTORY_ACTION_KEYS). Everything else (other methods, the namespace index,
  * unknown sub-routes, failed signatures) gets the same WP_Error that
  * WordPress builds for an unknown route, and OPTIONS gets the empty 200 that
  * WordPress sends for OPTIONS on an unknown route. Because no route is
@@ -20,15 +22,21 @@ defined( 'ABSPATH' ) || exit;
 final class Endpoint {
 	public const NAMESPACE   = 'fc-inventory/v1';
 	public const ROUTE       = '/inventory';
+	public const ACTION      = '/action';
 	public const LAST_PULL   = 'fc_inventory_last_pull';
 	public const LOG_GATE    = 'fc_inventory_log_gate';
 	private const PREFIX     = '/' . self::NAMESPACE;
 	private const FULL_ROUTE = self::PREFIX . self::ROUTE;
+	private const FULL_ACTION = self::PREFIX . self::ACTION;
 
 	/** At most one rejection line per this many seconds in the error log. */
 	private const LOG_INTERVAL = 60;
 
-	private static bool $verified = false;
+	/** Route the current request was verified for, null if none. */
+	private static ?string $verified = null;
+
+	/** Key id that signed the verified action request. */
+	private static string $action_key = '';
 
 	public static function register(): void {
 		add_action( 'rest_api_init', array( self::class, 'registerRoute' ) );
@@ -56,6 +64,19 @@ final class Endpoint {
 				'show_in_index'       => false,
 			)
 		);
+		if ( array() === Keys::configuredActions() ) {
+			return;
+		}
+		register_rest_route(
+			self::NAMESPACE,
+			self::ACTION,
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'act' ),
+				'permission_callback' => array( self::class, 'actionPermission' ),
+				'show_in_index'       => false,
+			)
+		);
 	}
 
 	/**
@@ -75,11 +96,15 @@ final class Endpoint {
 		if ( 'OPTIONS' === $request->get_method() ) {
 			return self::unknownOptions();
 		}
-		if ( ! self::isInventoryRead( $route, $request->get_method() ) || ! self::authorize( $request ) ) {
-			return self::notFound();
+		if ( self::isInventoryRead( $route, $request->get_method() ) && self::authorize( $request ) ) {
+			self::$verified = self::ROUTE;
+			return $result;
 		}
-		self::$verified = true;
-		return $result;
+		if ( self::FULL_ACTION === $route && 'POST' === $request->get_method() && self::authorizeAction( $request ) ) {
+			self::$verified = self::ACTION;
+			return $result;
+		}
+		return self::notFound();
 	}
 
 	private static function isInventoryRead( string $route, string $method ): bool {
@@ -121,6 +146,22 @@ final class Endpoint {
 			return false;
 		}
 		update_option( self::LAST_PULL, array( 'time' => time(), 'key_id' => $key_id ), false );
+		return true;
+	}
+
+	/** Action requests verify against the action keys only; the body is part of the signature. */
+	private static function authorizeAction( \WP_REST_Request $request ): bool {
+		$keys = Keys::configuredActions();
+		if ( array() === $keys ) {
+			return false;
+		}
+		try {
+			$verifier         = new Verifier( $keys, new OptionNonceStore(), time() );
+			self::$action_key = $verifier->verifyAction( self::headers( $request ), self::host(), (string) $request->get_body() );
+		} catch ( AuthFailure $e ) {
+			self::logRejection( 'action: ' . $e->getMessage() );
+			return false;
+		}
 		return true;
 	}
 
@@ -169,7 +210,32 @@ final class Endpoint {
 
 	/** @return true|\WP_Error */
 	public static function permission() {
-		return self::$verified ? true : self::notFound();
+		return self::ROUTE === self::$verified ? true : self::notFound();
+	}
+
+	/** @return true|\WP_Error */
+	public static function actionPermission() {
+		return self::ACTION === self::$verified ? true : self::notFound();
+	}
+
+	/** Runs one verified order. An invalid body is told to the (authenticated) caller. */
+	public static function act( \WP_REST_Request $request ): \WP_REST_Response {
+		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			define( 'DONOTCACHEPAGE', true );
+		}
+		nocache_headers();
+		try {
+			$order    = ActionRequest::fromJson( (string) $request->get_body() );
+			$response = new \WP_REST_Response( ActionRunner::run( $order, self::$action_key ), 200 );
+		} catch ( InvalidAction $e ) {
+			$response = new \WP_REST_Response( array( 'schema' => ActionRequest::SCHEMA, 'result' => 'invalid', 'messages' => array( $e->getMessage() ) ), 400 );
+		}
+		$response->header( 'Cache-Control', 'no-store' );
+		return $response;
+	}
+
+	public static function actionUrl(): string {
+		return rest_url( self::NAMESPACE . self::ACTION );
 	}
 
 	public static function respond(): \WP_REST_Response {

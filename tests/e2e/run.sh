@@ -5,7 +5,12 @@
 # tests/e2e/e2e.php as the puller and the WP-CLI commands, then removes
 # every container, the network and the volume again.
 #
-# Usage: tests/e2e/run.sh            (needs docker and php with sodium + zip)
+# Then orders updates through the action endpoint with the Python client
+# (tools/fc_action): plugin and theme update, a forced rollback, plugin
+# deactivation and a core update.
+#
+# Usage: tests/e2e/run.sh            (needs docker, php with sodium + zip, and
+#                                     python3 with tools/requirements.txt)
 #        FC_E2E_PORT=18081 tests/e2e/run.sh
 set -euo pipefail
 
@@ -32,6 +37,13 @@ make_key() {
   php -r '$kp = sodium_crypto_sign_keypair();
     file_put_contents($argv[1], base64_encode(sodium_crypto_sign_secretkey($kp)));
     echo base64_encode(sodium_crypto_sign_publickey($kp));' "${WORK}/secret.key"
+}
+
+# Action key: base64 seed for the Python client, prints the public key.
+make_action_key() {
+  php -r '$seed = random_bytes(32);
+    file_put_contents($argv[1], base64_encode($seed) . "\n"); chmod($argv[1], 0600);
+    echo base64_encode(sodium_crypto_sign_publickey(sodium_crypto_sign_seed_keypair($seed)));' "${WORK}/action.key"
 }
 
 make_zip() {
@@ -61,9 +73,14 @@ start_stack() {
   docker volume create "${P}-html" >/dev/null
   docker run -d --name "${P}-db" --network "${P}" -e MARIADB_DATABASE=wp -e MARIADB_USER=wp \
     -e MARIADB_PASSWORD=wp -e MARIADB_RANDOM_ROOT_PASSWORD=1 mariadb:11 >/dev/null
-  docker run -d --name "${P}-wp" --network "${P}" -p "127.0.0.1:${PORT}:80" -v "${P}-html:/var/www/html" \
+  docker run -d --name "${P}-wp" --network "${P}" -p "127.0.0.1:${PORT}:${PORT}" -v "${P}-html:/var/www/html" \
     "${DB_ENV[@]}" -e WORDPRESS_CONFIG_EXTRA="${CONFIG_EXTRA}" wordpress:php8.3-apache >/dev/null
   wait_for "WordPress files" docker exec "${P}-wp" test -f /var/www/html/wp-config.php
+  # Apache also listens on the published port, so loopback requests to the
+  # site URL (health probes of the action runner) work inside the container.
+  docker exec "${P}-wp" sh -c "echo 'Listen ${PORT}' >> /etc/apache2/ports.conf \
+    && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:80 *:${PORT}>/' /etc/apache2/sites-enabled/000-default.conf \
+    && apache2ctl graceful" >/dev/null
   wait_for "database" wp_cli db check
 }
 
@@ -94,10 +111,78 @@ check_uninstall() {
   echo "PASS uninstall removed all fc_inventory rows"
 }
 
+fc_action() {
+  PYTHONPATH="${ROOT}/tools" python3 -m fc_action --config "${WORK}/sites.yml" "$@"
+}
+
+expect() {
+  local what="$1" want="$2" got="$3"
+  if [ "${want}" != "${got}" ]; then
+    echo "FAIL ${what}: expected '${want}', got '${got}'" >&2
+    exit 1
+  fi
+  echo "PASS ${what}: ${got}"
+}
+
+# Orders through the action endpoint, each checked with WP-CLI afterwards.
+check_actions() {
+  printf 'key_id: e2e-ops\nkey_file: %s\ntimeout: 300\nsites:\n  e2e: %s\n' "${WORK}/action.key" "${BASE}" > "${WORK}/sites.yml"
+  wp_cli plugin install akismet --version=5.3 --force --activate >/dev/null
+  wp_cli plugin install hello-dolly --version=1.6 --force --activate >/dev/null
+  wp_cli theme install twentytwentyfour --version=1.0 --force >/dev/null
+
+  fc_action update-plugin e2e akismet
+  expect "akismet left 5.3" "yes" "$([ "$(wp_cli plugin get akismet --field=version)" != "5.3" ] && echo yes || echo no)"
+  expect "akismet still active" "active" "$(wp_cli plugin get akismet --field=status)"
+  expect "backup written" "1" "$(docker exec "${P}-wp" sh -c 'ls /var/www/html/wp-content/fc-inventory-backups-*/plugin--akismet--5.3--*.zip | wc -l' | tr -d '[:space:]')"
+  expect "backup directory is not served" "403" "$(docker exec "${P}-wp" sh -c 'curl -s -o /dev/null -w "%{http_code}" "http://localhost/wp-content/$(basename /var/www/html/wp-content/fc-inventory-backups-*)/index.php"')"
+
+  fc_action update-plugin e2e akismet
+  fc_action update-theme e2e twentytwentyfour
+  expect "theme left 1.0" "yes" "$([ "$(wp_cli theme get twentytwentyfour --field=version)" != "1.0" ] && echo yes || echo no)"
+
+  log "forced rollback: the site answers 500 once the upgrade has run"
+  cat > "${WORK}/e2e-break.php" <<'PHP'
+<?php
+// Test helper: once an upgrade has run, every later web request answers 500.
+add_action( 'upgrader_process_complete', function () {
+	$boom = '<?php if ( ! defined( "WP_CLI" ) ) { http_response_code( 500 ); exit; }';
+	file_put_contents( WPMU_PLUGIN_DIR . '/e2e-boom.php', $boom );
+} );
+PHP
+  docker exec "${P}-wp" mkdir -p /var/www/html/wp-content/mu-plugins
+  docker cp "${WORK}/e2e-break.php" "${P}-wp:/var/www/html/wp-content/mu-plugins/e2e-break.php" >/dev/null
+  docker exec "${P}-wp" chown -R www-data:www-data /var/www/html/wp-content/mu-plugins
+  fc_action update-plugin e2e hello-dolly && { echo "FAIL rollback run reported success" >&2; exit 1; }
+  docker exec "${P}-wp" rm -f /var/www/html/wp-content/mu-plugins/e2e-break.php /var/www/html/wp-content/mu-plugins/e2e-boom.php
+  expect "hello-dolly restored to 1.6" "1.6" "$(wp_cli plugin get hello-dolly --field=version)"
+  expect "hello-dolly active after rollback" "active" "$(wp_cli plugin get hello-dolly --field=status)"
+
+  fc_action deactivate-plugin e2e hello-dolly
+  expect "hello-dolly deactivated" "inactive" "$(wp_cli plugin get hello-dolly --field=status)"
+  fc_action deactivate-plugin e2e fc-inventory && { echo "FAIL fc-inventory deactivated itself" >&2; exit 1; }
+  fc_action update-plugin e2e not-installed && { echo "FAIL unknown plugin reported success" >&2; exit 1; }
+
+  log "core: one patch release back, then update on the same branch"
+  local current previous
+  current="$(wp_cli core version)"
+  previous="$(php -r '$p = explode(".", $argv[1]); echo count($p) > 2 && (int) $p[2] > 0 ? "$p[0].$p[1]." . ((int) $p[2] - 1) : "";' "${current}")"
+  if [ -n "${previous}" ]; then
+    wp_cli core update --version="${previous}" --force >/dev/null
+    fc_action update-core e2e
+    expect "core back on ${current}" "${current}" "$(wp_cli core version)"
+  else
+    fc_action update-core e2e
+    echo "SKIP core downgrade: ${current} is the first release of its branch"
+  fi
+  wp_cli option get fc_inventory_last_action --format=json
+}
+
 main() {
   log "key pair and plugin ZIP"
   PUB="$(make_key)"
-  CONFIG_EXTRA="define('FC_INVENTORY_PUBKEYS', ['${KEY_ID}' => '${PUB}']);"
+  ACTION_PUB="$(make_action_key)"
+  CONFIG_EXTRA="define('FC_INVENTORY_PUBKEYS', ['${KEY_ID}' => '${PUB}']); define('FC_INVENTORY_ACTION_KEYS', ['e2e-ops' => '${ACTION_PUB}']);"
   make_zip
   cp "${ROOT}/tests/e2e/updater-check.php" "${ROOT}/tests/e2e/admin-check.php" "${WORK}/"
   log "starting containers (${P})"
@@ -115,6 +200,8 @@ main() {
   wp_cli eval-file /work/admin-check.php --user=admin
   log "last successful pull (option)"
   wp_cli option get fc_inventory_last_pull --format=json
+  log "actions (signed orders)"
+  check_actions
   log "uninstall removes every stored row"
   check_uninstall
   log "debug log lines of the plugin"

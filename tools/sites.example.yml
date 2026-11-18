@@ -1,0 +1,16 @@
+# Configuration of fc-action. Default location: ~/.config/fc-action/sites.yml
+# (override with --config or FC_ACTION_CONFIG). Holds no secret itself.
+
+# Key id as entered in FC_INVENTORY_ACTION_KEYS on the sites.
+key_id: ops-2026-11
+
+# Private key (base64 of the 32-byte Ed25519 seed, mode 0600).
+# Create it with: python3 -m fc_action keygen --out <file> --key-id <id>
+key_file: ~/.config/fc-action/ops-2026-11.key
+
+# Seconds to wait for one order; a large plugin takes a while to zip and replace.
+timeout: 900
+
+# Short name -> base URL of the WordPress site (home URL, with scheme).
+sites:
+  example: https://www.example.com

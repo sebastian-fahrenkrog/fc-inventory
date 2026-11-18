@@ -31,3 +31,9 @@ jobs:
         run: |
           php scripts/gen-test-vector.php "$RUNNER_TEMP/vector.json"
           diff -u tests/vectors/signature-v1.json "$RUNNER_TEMP/vector.json"
+          php scripts/gen-action-vector.php "$RUNNER_TEMP/action.json"
+          diff -u tests/vectors/action-v1.json "$RUNNER_TEMP/action.json"
+      - name: Python client tests
+        run: |
+          python3 -m pip install --quiet -r tools/requirements.txt
+          cd tools && python3 -m unittest discover -s tests -t .

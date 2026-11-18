@@ -31,6 +31,27 @@ final class Verifier {
 	 * @throws AuthFailure on any failed check
 	 */
 	public function verify( array $headers, string $host ): string {
+		$build = static fn( string $timestamp, string $nonce ): string => Signature::message( $host, Signature::CANONICAL_PATH, $timestamp, $nonce );
+		return $this->check( $headers, $host, $build );
+	}
+
+	/**
+	 * Verifies an action request (contract action-v1): the raw body is part
+	 * of the signed message.
+	 *
+	 * @param array{key_id?: ?string, timestamp?: ?string, nonce?: ?string, signature?: ?string} $headers
+	 * @return string the key id that signed the request
+	 * @throws AuthFailure on any failed check
+	 */
+	public function verifyAction( array $headers, string $host, string $body ): string {
+		$build = static fn( string $timestamp, string $nonce ): string => Signature::actionMessage( $host, $timestamp, $nonce, $body );
+		return $this->check( $headers, $host, $build );
+	}
+
+	/**
+	 * @param callable(string,string):string $build message from timestamp and nonce
+	 */
+	private function check( array $headers, string $host, callable $build ): string {
 		$key_id    = $this->keyId( (string) ( $headers['key_id'] ?? '' ) );
 		$timestamp = $this->timestamp( (string) ( $headers['timestamp'] ?? '' ) );
 		$nonce     = $this->nonce( (string) ( $headers['nonce'] ?? '' ) );
@@ -38,8 +59,7 @@ final class Verifier {
 		if ( '' === $host ) {
 			throw new AuthFailure( 'missing host' );
 		}
-		$message = Signature::message( $host, Signature::CANONICAL_PATH, $timestamp, $nonce );
-		if ( ! sodium_crypto_sign_verify_detached( $signature, $message, $this->keys[ $key_id ] ) ) {
+		if ( ! sodium_crypto_sign_verify_detached( $signature, $build( $timestamp, $nonce ), $this->keys[ $key_id ] ) ) {
 			throw new AuthFailure( 'signature does not verify' );
 		}
 		$this->consumeNonce( $nonce );

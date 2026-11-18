@@ -14,9 +14,15 @@ require_once __DIR__ . '/Verifier.php';
 require_once __DIR__ . '/Manifest.php';
 require_once __DIR__ . '/FileScanner.php';
 require_once __DIR__ . '/Inventory.php';
+require_once __DIR__ . '/InvalidAction.php';
+require_once __DIR__ . '/ActionRequest.php';
+require_once __DIR__ . '/CoreOffer.php';
 
 if ( defined( 'ABSPATH' ) ) {
 	require_once __DIR__ . '/OptionNonceStore.php';
+	require_once __DIR__ . '/Health.php';
+	require_once __DIR__ . '/Backup.php';
+	require_once __DIR__ . '/ActionRunner.php';
 	require_once __DIR__ . '/Endpoint.php';
 	require_once __DIR__ . '/Admin.php';
 	require_once __DIR__ . '/Updater.php';

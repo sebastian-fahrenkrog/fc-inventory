@@ -1,0 +1,29 @@
+{
+    "description": "fc-inventory contract action-v1 vector. Signed message: prefix, method, host, path, timestamp, nonce and the lowercase hex SHA-256 of the raw request body, joined by \"\\n\". Ed25519 signatures are deterministic, so every \"signature\" must match byte for byte.",
+    "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=",
+    "key_id": "ops-2026-11",
+    "prefix": "fc-inventory-action-v1",
+    "method": "POST",
+    "host": "www.example.com",
+    "path": "/wp-json/fc-inventory/v1/action",
+    "timestamp": 1794729600,
+    "cases": [
+        {
+            "name": "update-plugin",
+            "nonce": "AAECAwQFBgcICQoLDA0ODw",
+            "body": "{\"schema\":1,\"action\":\"update_plugin\",\"slug\":\"akismet\"}",
+            "body_sha256": "938d1e7d1dc9cf2fa478a8c6b58f0d6f681cd16db6c9f25611a1450548b90c8b",
+            "message": "fc-inventory-action-v1\nPOST\nwww.example.com\n/wp-json/fc-inventory/v1/action\n1794729600\nAAECAwQFBgcICQoLDA0ODw\n938d1e7d1dc9cf2fa478a8c6b58f0d6f681cd16db6c9f25611a1450548b90c8b",
+            "signature": "euyt4qM0z6hWhVhIYnF2Enbs92EIns07mTOpppjvhyes3nw5O9Ew5LYrefJcyaX1kOl8f6j7XxDCJHWtTVs6Dg=="
+        },
+        {
+            "name": "update-core-major",
+            "nonce": "AQEBAQEBAQEBAQEBAQEBAQ",
+            "body": "{\"schema\":1,\"action\":\"update_core\",\"allow_major\":true}",
+            "body_sha256": "db4c16339c11a0eeb8d7b1fe304b057fa82e14ac1579aa387d4cda84450baace",
+            "message": "fc-inventory-action-v1\nPOST\nwww.example.com\n/wp-json/fc-inventory/v1/action\n1794729600\nAQEBAQEBAQEBAQEBAQEBAQ\ndb4c16339c11a0eeb8d7b1fe304b057fa82e14ac1579aa387d4cda84450baace",
+            "signature": "7wr5UJIM2/RNnUehs0608Eh9FAVNzLZJCTXLW6NzzkdhDOd5BKcARCLMbyQ9MJuRIo44l39X7owLPAPiWoT9Bg=="
+        }
+    ]
+}

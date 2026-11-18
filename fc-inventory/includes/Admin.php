@@ -79,6 +79,8 @@ final class Admin {
 			'Endpoint'         => Endpoint::url(),
 			'Fallback URL'     => Endpoint::fallbackUrl(),
 			'Last pull'        => self::lastPull(),
+			'Action keys'      => self::actionKeyList(),
+			'Last action'      => self::lastAction(),
 			'Plugin version'   => FC_INVENTORY_VERSION,
 		);
 		echo '<h2>Status</h2><table class="widefat striped" style="max-width:60em"><tbody>';
@@ -99,6 +101,20 @@ final class Admin {
 			return 'never';
 		}
 		return sprintf( '%s UTC (key %s)', gmdate( 'Y-m-d H:i:s', (int) $last['time'] ), (string) ( $last['key_id'] ?? '' ) );
+	}
+
+	private static function actionKeyList(): string {
+		$ids = array_keys( Keys::configuredActions() );
+		return array() === $ids ? 'none – updates cannot be ordered (constant FC_INVENTORY_ACTION_KEYS)' : implode( ', ', $ids );
+	}
+
+	private static function lastAction(): string {
+		$last = get_option( ActionRunner::LAST_ACTION );
+		if ( ! is_array( $last ) || empty( $last['time'] ) ) {
+			return 'never';
+		}
+		$what = trim( (string) ( $last['action'] ?? '' ) . ' ' . (string) ( $last['slug'] ?? '' ) );
+		return sprintf( '%s UTC: %s → %s (key %s)', gmdate( 'Y-m-d H:i:s', (int) $last['time'] ), $what, (string) ( $last['result'] ?? '' ), (string) ( $last['key_id'] ?? '' ) );
 	}
 
 	private static function renderForm(): void {

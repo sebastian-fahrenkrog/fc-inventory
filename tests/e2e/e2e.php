@@ -9,6 +9,8 @@
 
 const PATH          = '/wp-json/fc-inventory/v1/inventory';
 const FALLBACK_PATH = '/?rest_route=/fc-inventory/v1/inventory';
+const ACTION_PATH   = '/wp-json/fc-inventory/v1/action';
+const ACTION_BODY   = '{"schema":1,"action":"deactivate_plugin","slug":"akismet"}';
 
 $failures = 0;
 
@@ -38,12 +40,13 @@ function signed_headers( array $cfg, ?string $host = null, ?int $ts = null, ?str
 }
 
 /** @return array{status: string, headers: list<string>, body: string} */
-function request( array $cfg, string $path, array $headers = array(), string $method = 'GET' ): array {
+function request( array $cfg, string $path, array $headers = array(), string $method = 'GET', string $content = '' ): array {
 	$ctx  = stream_context_create(
 		array(
 			'http' => array(
 				'method'          => $method,
 				'header'          => $headers,
+				'content'         => $content,
 				'ignore_errors'   => true,
 				'follow_location' => 0,
 				'timeout'         => 30,
@@ -85,9 +88,9 @@ function check_success( array $cfg, string $path ): void {
  * A rejected request must look exactly like the same request to an unknown
  * route: 404 rest_no_route, or for OPTIONS the empty 200 WordPress sends there.
  */
-function check_identical_404( array $cfg, string $what, string $path, array $headers, string $unknown_path, string $method = 'GET' ): void {
-	$ours     = request( $cfg, $path, $headers, $method );
-	$unknown  = request( $cfg, $unknown_path, array(), $method );
+function check_identical_404( array $cfg, string $what, string $path, array $headers, string $unknown_path, string $method = 'GET', string $content = '' ): void {
+	$ours     = request( $cfg, $path, $headers, $method, $content );
+	$unknown  = request( $cfg, $unknown_path, array(), $method, $content );
 	$expected = 'OPTIONS' === $method ? ' 200' : ' 404';
 	check( str_contains( $ours['status'], $expected ), "$what →$expected" );
 	check( comparable( $ours ) === comparable( $unknown ), "$what → byte-identical to $method $unknown_path" );
@@ -121,6 +124,26 @@ function check_hidden( array $cfg ): void {
 	check_identical_404( $cfg, 'POST on the route', PATH, array(), '/wp-json/no-such-namespace/v1/x', 'POST' );
 }
 
+/**
+ * The action route answers only to the separate action keys: unsigned
+ * orders and orders signed with the puller (read) key look like an unknown route.
+ */
+function check_action_rejections( array $cfg ): void {
+	$unknown = '/wp-json/no-such-namespace/v1/x';
+	check_identical_404( $cfg, 'unsigned order', ACTION_PATH, array(), $unknown, 'POST', ACTION_BODY );
+	$ts      = (string) time();
+	$nonce   = nonce();
+	$message = implode( "\n", array( 'fc-inventory-action-v1', 'POST', $cfg['host'], ACTION_PATH, $ts, $nonce, hash( 'sha256', ACTION_BODY ) ) );
+	$headers = array(
+		'X-FC-Key-Id: ' . $cfg['key_id'],
+		'X-FC-Timestamp: ' . $ts,
+		'X-FC-Nonce: ' . $nonce,
+		'X-FC-Signature: ' . base64_encode( sodium_crypto_sign_detached( $message, $cfg['secret'] ) ),
+	);
+	check_identical_404( $cfg, 'order signed with the puller key', ACTION_PATH, $headers, $unknown, 'POST', ACTION_BODY );
+	check_identical_404( $cfg, 'GET on the action route', ACTION_PATH, array(), $unknown );
+}
+
 /** Unsigned noise must not lock the puller out (no failure throttle). */
 function check_no_lockout( array $cfg ): void {
 	for ( $i = 0; $i < 15; $i++ ) {
@@ -149,6 +172,7 @@ check_success( $cfg, PATH );
 check_success( $cfg, FALLBACK_PATH );
 check_rejections( $cfg );
 check_hidden( $cfg );
+check_action_rejections( $cfg );
 check_no_lockout( $cfg );
 fwrite( STDOUT, 0 === $failures ? "e2e: all checks passed\n" : "e2e: $failures check(s) failed\n" );
 exit( 0 === $failures ? 0 : 1 );

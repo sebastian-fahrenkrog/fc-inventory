@@ -1,6 +1,6 @@
 {
     "name": "sebastian-fahrenkrog/fc-inventory",
-    "description": "WordPress plugin: signed, read-only inventory endpoint for a Dependency-Track puller.",
+    "description": "WordPress plugin: signed inventory endpoint for a Dependency-Track puller and signed update orders.",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
     "require": {
